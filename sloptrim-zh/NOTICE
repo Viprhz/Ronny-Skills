@@ -1,0 +1,15 @@
+sloptrim-zh
+
+中文编辑规则与范围/抽取/保全检查层基于 sloptrim 架构改编。
+上游： https://github.com/seyedehsanhadi/sloptrim
+Copyright 2026 Seyed Ehsan Hadi
+许可： Apache License, Version 2.0，见 LICENSE.txt。
+
+固定上游版本：0.9.6
+固定提交：9b3e2efe6ab64d9b60c214ad1213b2b30bbddb27
+scripts/_vendor/sloptrim_detect.py 是该提交的 scripts/detect.py，未作修改。
+scripts/_vendor/NOTICE 原样保留上游通知；其中提到的字体与资源未随本 skill 分发。
+
+本地修改（0.1.1）：中文词表与计分、正文/代码/引文/表格范围、受保护清洗、
+抽取失败状态、命令行接口、来源待核查提示、事实保全辅助检查、回归与行为评估。
+这些改动不表示上游对中文规则或评估结果背书。

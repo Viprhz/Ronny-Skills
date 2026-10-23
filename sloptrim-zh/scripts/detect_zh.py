@@ -1,22 +1,9 @@
 #!/usr/bin/env python3
 """detect_zh.py — 中文 AI 腔检测器。
 
-设计原则（对齐上游 sloptrim 的架构，中文重做语言层）：
-
-1.  语言无关层**复用**上游 detect.py：字符清洗（零宽字符、同形异码、
-    非标准空格）、Markdown 剥离、引文剥离、格式提取（docx/epub/odt…）。
-    找不到上游时降级为纯正则实现，检测器仍可独立运行。
-2.  语言相关层全部中文重做：
-      - 分句：。！？；…（不按换行切；标题、列表已在剥 markdown 时移除）
-      - 计数：汉字按字计，英文按词计，数字按个数计
-      - 命中判据：**密度**（每千字命中数）而非绝对次数。
-        理由：中文信息密度远高于英文，同一绝对次数在 200 字和 5000 字
-        的文本里意义完全不同。实测全部计分 pattern 合计密度：中文人写
-        ≤2.23/千字，模型生成 ≥26.2/千字（见 SKILL.md「校准」）。
-3.  有一部分上游 pattern 在中文里**不成立**，明确降级或排除：
-      - 破折号（——）：中文正常标点，降为 report-only
-      - 缩写、contraction absence、title case 等：无中文对应物
-4.  分数是**分诊启发式**，描述文本不描述作者。
+使用固定的上游字符/格式组件与独立中文规则。代码和逐字引文受保护；
+表格文案参与词汇检查，结构化内容不参与散文节奏统计。
+分数只用于定位编辑线索，不能推断作者身份，也不能代替事实核对。
 
 用法：
     python3 detect_zh.py file.md            # JSON 报告
@@ -31,181 +18,65 @@ import os
 import re
 import statistics
 import sys
-import unicodedata
 import zipfile
 from pathlib import Path
+import argparse
+import xml.etree.ElementTree as ET
 
-# ---------------------------------------------------------------- 上游复用
-def _find_upstream() -> Path | None:
-    """定位上游 detect.py。优先 skill 目录，其次通用搜索。"""
-    cands: list[Path] = []
-    env = os.environ.get("SLOPTRIM_DETECT_PY")
-    if env:
-        cands.append(Path(env))
-    # 快路径：与本 skill 同级的 sloptrim（标准安装布局），免去整树 rglob。
-    here = Path(__file__).resolve()
-    cands.append(here.parent.parent.parent / "sloptrim" / "scripts" / "detect.py")
-    for p in cands:
-        if p.is_file():
-            return p
-    home = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes"))
-    for root in (home / "skills", Path.home() / ".hermes" / "skills"):
-        if not root.is_dir():
-            continue
-        for p in root.rglob("sloptrim/scripts/detect.py"):
-            cands.append(p)
-    for p in cands:
-        if p.is_file():
-            return p
-    return None
+# 支持 CLI、importlib 和插件从任意 cwd 加载。
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+# ---------------------------------------------------------------- 固定上游组件
+# 随 skill 分发，避免安装机器上的另一个版本悄悄改变行为。
+_VENDOR_PATH = Path(__file__).parent / "_vendor" / "sloptrim_detect.py"
 
 
-def _load_upstream():
-    p = _find_upstream()
-    if not p:
-        return None
-    try:
-        spec = importlib.util.spec_from_file_location("sloptrim_detect_upstream", p)
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        return mod
-    except Exception:
-        return None
+def _load_module(path: Path):
+    spec = importlib.util.spec_from_file_location("sloptrim_character_backend", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
-_UP = _load_upstream()
+_BUNDLED = _load_module(_VENDOR_PATH)
+_UP = _BUNDLED
+if os.environ.get("SLOPTRIM_DETECT_PY"):
+    _UP = _load_module(Path(os.environ["SLOPTRIM_DETECT_PY"]).expanduser())
 
 
-# -------------------------------------------------- 降级实现（无上游时）
-def _fallback_strip_markdown_furniture(text: str) -> str:
-    text = _strip_feishu_tables(text)
-    text = re.sub(r"```.*?```", " ", text, flags=re.S)
-    text = re.sub(r"~~~.*?~~~", " ", text, flags=re.S)
-    text = re.sub(r"`[^`\n]*`", " ", text)
-    text = re.sub(r"^\s{0,3}#{1,6}\s+.*$", " ", text, flags=re.M)
-    text = re.sub(r"^\s{0,3}[-*+]\s+", " ", text, flags=re.M)
-    text = re.sub(r"^\s{0,3}\d+[.)]\s+", " ", text, flags=re.M)
-    text = re.sub(r"^\s{0,3}>.*$", " ", text, flags=re.M)
-    text = re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", text)
-    text = re.sub(r"^\s*[-*_]{3,}\s*$", " ", text, flags=re.M)
-    text = re.sub(r"\|", " ", text)
-    return text
+def _backend():
+    # 测试/调用方禁用外部上游时仍有相同版本的内置能力，不再静默缩水。
+    return _UP if _UP is not None else _BUNDLED
 
 
-# 飞书导出的 markdown 用 <lark-table> / <lark-tr> / <lark-td> 表示表格，
-# 用 <at id=...> 提及人，用 {align="center"} 之类的属性标记。
-# 这些标记的标签名（larktd、larktr）本身是英文，若不剥掉会污染 n-gram。
-_LARK_TAG = re.compile(r"</?lark-[a-z-]+(?:\s[^>]*)?>", re.I)
-_LARK_AT = re.compile(r"<at\b[^>]*>.*?</at>", re.I | re.S)
-_LARK_ATTR = re.compile(r"\{[a-zA-Z_]+=\"[^\"]*\"\}", re.I)
-_HTML_TAG = re.compile(r"</?[a-zA-Z][a-zA-Z0-9-]*(?:\s[^>]{0,200})?>", re.S)
-
-# 整块表格：**连内容一起去掉**。
-# 只剥标签会把每个单元格变成一段孤立文本（短行、编号列表、重复的表头），
-# 这些会被当成散文——实测一份 TMC 文档因表头重复 11 次被判成「退化重复」。
-# 表格是结构化数据，整块移除才是干净的边界。
-_LARK_TABLE_BLOCK = re.compile(r"<lark-table\b.*?</lark-table>", re.I | re.S)
-_MD_TABLE_ROW = re.compile(r"^\s*\|.*\|\s*$", re.M)
-
-
-def _strip_feishu_tables(text: str) -> str:
-    """剥掉飞书 markdown 的 XML 风格标记与整块表格，只保留正文。"""
-    text = _LARK_TABLE_BLOCK.sub("\n", text)
-    text = _MD_TABLE_ROW.sub("\n", text)
-    text = _LARK_AT.sub(" ", text)
-    text = _LARK_TAG.sub(" ", text)
-    text = _LARK_ATTR.sub(" ", text)
-    text = _HTML_TAG.sub(" ", text)
-    return text
-
-
-def _fallback_strip_quoted_spans(text: str) -> str:
-    lines = text.split("\n")
-    quoted = [bool(re.match(r"^[ \t]{0,3}>[ \t]?", ln)) for ln in lines]
-    out = []
-    for ln, q in zip(lines, quoted):
-        out.append("" if q else ln)
-    return "\n".join(out)
-
-
-def _fallback_clean_text(text: str) -> str:
-    """字符层清洗：去零宽字符（非功能）、折叠同形异码、规范空格。"""
-    out = []
-    for ch in text:
-        cat = unicodedata.category(ch)
-        if cat in ("Cf", "Cc") and ch not in "\t\n\r":
-            continue
-        if cat in ("Zl", "Zp"):
-            out.append("\n")
-            continue
-        out.append(ch)
-    return "".join(out)
-
-
-def strip_markdown_furniture(text: str) -> str:
-    """剥 markdown 装饰。
-
-    先剥飞书的 XML 风格标记——上游不认识 <lark-table>，标签名（larktd、larktr）
-    本身是英文，会污染 n-gram 并让表格内容被当成散文。
-    """
-    text = _strip_feishu_tables(text)
-    if _UP:
-        try:
-            return _UP.strip_markdown_furniture(text)
-        except Exception:
-            pass
-    return _fallback_strip_markdown_furniture(text)
+from text_scopes import clean_protected, prepare_scopes, strip_protected
+from document_text import extract_office
 
 
 def strip_quoted_spans(text: str) -> str:
-    return _UP.strip_quoted_spans(text) if _UP else _fallback_strip_quoted_spans(text)
+    return strip_protected(text, _backend())
+
+
+def strip_markdown_furniture(text: str) -> str:
+    return prepare_scopes(text, _backend())[0]
 
 
 def clean_text(text: str) -> str:
-    if _UP:
-        text = _UP.clean_text(text, syntax="markdown")
-    else:
-        text = _fallback_clean_text(text)
-    # 上游把汉字旁的 ZWSP 当「无空格文字的断行提示」保留（对泰文、老挝文成立）。
-    # 中文按 UAX#14 任意两字之间都可断行，不需要 ZWSP——汉字旁的 ZWSP 几乎都是
-    # 复制粘贴残渣或水印，这里补删。
-    return _ZWSP_NEAR_HAN.sub("", text)
-
-
-# 汉字或全角标点旁边的 ZWSP / 词连接符 / BOM。
-_HAN_OR_FULLWIDTH = r"[㐀-䶿一-鿿豈-﫿\u3000-\u303f\uff00-\uffef]"
-_ZWSP_NEAR_HAN = re.compile(
-    rf"(?<={_HAN_OR_FULLWIDTH})[\u200b\u2060\ufeff]+|[\u200b\u2060\ufeff]+(?={_HAN_OR_FULLWIDTH})")
-
-
-# 降级版不可见字符检测。只抓「scrub 会删掉的」那几类：零宽空格/连接符、
-# 词连接符、BOM、软连字符。ZWJ 夹在两个 emoji 之间是功能性的（家庭/职业组合
-# emoji），不算。
-_INVISIBLE_FALLBACK = set("\u200b\u200c\u200d\u2060\ufeff\u00ad\u180e\u2061\u2062\u2063\u2064")
-_EMOJI_RE = re.compile(r"[\U0001F1E6-\U0001F1FF\U0001F300-\U0001FAFF\u2600-\u27BF]")
+    return clean_protected(text, _backend())
 
 
 def detect_invisible(text: str) -> int:
-    """数 scrub 会删掉的不可见字符。优先用上游（与 --clean 判据一致），
-    再补上上游放过、但本 skill 的 clean_text 会删的「汉字旁 ZWSP」。"""
-    if _UP and hasattr(_UP, "detect_invisible_chars"):
-        try:
-            n = int(_UP.detect_invisible_chars(text).get("count", 0))
-            if not _ZWSP_NEAR_HAN.search(text):
-                return n          # 快路径：上游 clean_text 逐字走，大文档很贵
-            residual = _UP.clean_text(text, syntax="markdown")
-            return n + sum(len(m.group(0)) for m in _ZWSP_NEAR_HAN.finditer(residual))
-        except Exception:
-            pass
-    n = 0
-    for i, ch in enumerate(text):
-        if ch not in _INVISIBLE_FALLBACK:
-            continue
-        if ch == "\u200d" and 0 < i < len(text) - 1 and \
-                _EMOJI_RE.match(text[i - 1]) and _EMOJI_RE.match(text[i + 1]):
-            continue
-        n += 1
-    return n
+    backend = _backend()
+    n = int(backend.detect_invisible_chars(text).get("count", 0))
+    # 中文旁的 ZWSP 需补删；这里接收的范围已经排除了代码与引文。
+    residual = backend.clean_text(text, syntax="markdown")
+    return n + sum(len(m.group(0)) for m in _ZWSP_NEAR_HAN.finditer(residual))
+
+
+_HAN_OR_FULLWIDTH = r"[㐀-䶿一-鿿豈-﫿\u3000-\u303f\uff00-\uffef]"
+_ZWSP_NEAR_HAN = re.compile(
+    rf"(?<={_HAN_OR_FULLWIDTH})[\u200b\u2060\ufeff]+|[\u200b\u2060\ufeff]+(?={_HAN_OR_FULLWIDTH})")
+_EMOJI_RE = re.compile(r"[\U0001F1E6-\U0001F1FF\U0001F300-\U0001FAFF\u2600-\u27BF]")
 
 
 # ---------------------------------------------------------------- 中文基础
@@ -242,11 +113,7 @@ def zh_split_paragraphs(text: str) -> list[str]:
 def burstiness(sents: list[str]) -> dict:
     """句长变异系数（CV）。中文按字数。cv 越低越接近「节奏平」。
 
-    最小句数门槛 5（2026-10-22 用户拍板方案 A）。原来 ≥3 句就判，实测在 3 句
-    样本上不可靠：一篇 122 字文档 3 句 [44,41,37] 得 cv=0.071 被判单调；
-    另一篇 3 句 [257,274,127]，127 与 274 差一倍多、人读起来节奏并不平，
-    cv=0.297 仍压到 0.35 阈值下被判单调。3 个数据点算变异系数，均值稍偏
-    CV 即翻倍或腰斩，无统计意义。
+    至少 5 句才报告，避免对极短样本给出伪精确节奏判断。
     """
     lengths = [zh_count(s) for s in sents if zh_count(s) > 0]
     if len(lengths) < 5:
@@ -365,12 +232,12 @@ def _is_structured_line(p: str) -> bool:
 
 
 # ---------------------------------------------------------------- 机器痕迹
-# 与语言无关，但在中文里同样是「机器写的」硬证据。
+# 与语言无关的编辑线索，不能用来推断整篇作者身份。
 # label 必须是人话——报告会直接把 label 打给模型看，不能是 pattern key。
 #
 # 分两类：
-#   decisive —— 自动化留下的硬痕迹（同形异码、跟踪参数、聊天标记、零宽字符）。
-#               这些只有机器会留下，是 AI 味的最硬证据。
+#   decisive —— 工具链或聊天残留的强编辑线索。
+#               仅说明可能存在工具链残留，不证明正文由模型生成。
 #   defect  —— 文档缺陷（占位符没填）。中文语境下极常见：会议纪要的待办表里
 #               写「[待定，例如：10月27日]」是**人写的**工作文档，不是 AI 味。
 #               它值得被报告（该填的没填），但不该触发 decisive 抬分底线。
@@ -440,7 +307,7 @@ _DECISIVE_RE = {
 # ---------------------------------------------------------------- 中文词表
 # 每条：family -> (label, 正则, 每千字密度阈值, 权重档)
 #   权重档 decisive(3.0) / strong(1.6) / soft(1.0)
-#   阈值来自实测校准：中文人写文本 ≤2.4/千字，模型生成 ≥8/千字。
+#   阈值为历史开发启发式，不能据此声称普遍准确率。
 _ZH_PATTERNS: dict[str, tuple[str, str, float, str]] = {
     # --- 词汇：空洞大词 ---
     "1_ai_bigwords": (
@@ -496,16 +363,16 @@ _ZH_PATTERNS: dict[str, tuple[str, str, float, str]] = {
         0.8, "soft"),
     # --- 证据：无来源引用 ---
     "11_unsourced_evidence": (
-        "无来源证据",
+        "来源待核查",
         # 「据研究/据统计/据调查」是无来源断言标记。必须加负向后顾，否则
         # 「数据统计」里的子串「据统计」会被命中——实测《0514阶跃合作议题讨论》
         # 因「AGE数据统计」被判「无来源证据」。
         r"(?<![数依根证字单])据(?:统计|调查|研究)|"
-        r"(?:大量|大量)(?:实践证明|研究表明|调查显示|统计显示)|"
+        r"大量(?:实践证明|研究表明|调查显示|统计显示)|"
         r"相关(?:研究|数据|报告|调查)(?:表明|显示|证明)|"
         r"有(?:数据|研究)(?:表明|显示|证明)|"
         r"实践(?:证明|表明)了",
-        1.0, "strong"),
+        1.0, "report"),
     # --- 翻译腔 ---
     "6_translationese": (
         "翻译腔",
@@ -538,10 +405,10 @@ _ZH_PATTERNS: dict[str, tuple[str, str, float, str]] = {
     # 「正如某位资深产品经理所言」——无来源的权威背书。
     # 光秃秃的「正如」不算（「正如上次会议定的那样」是正常回指）。
     "16_false_authority": (
-        "虚假权威引用",
+        "权威引用待核查",
         r"正如[^，。\n]{1,24}(?:所言|所说|所讲|指出的那样)|"
         r"有(?:专家|学者|大师|资深[^，。\n]{0,6})[^，。\n]{0,10}(?:指出|表示|认为|强调)",
-        1.0, "strong"),
+        1.0, "report"),
     # --- 结构：空洞动作短语 ---
     # 「反复验证」「不断打磨」「沉淀方法论」——只有姿态没有动作。
     # 「深度融合」已在 1_ai_bigwords，不重复。附近有数字的命中按具体陈述豁免。
@@ -621,17 +488,30 @@ _ZH_REPORT_ONLY = {
     "12_quote_coining": ("引号造词", re.compile(r"[“\"][^”\"]{1,8}(?:式|型|化|主义|论|理念|思维|范式|路径|策略)[”\"]")),
 }
 
-# 具体性豁免：命中片段前后 ±12 字内有数字/量词单位，说明句子托着具体事实
-# （「降低了服务器成本，每月省 3000 元」「实现了 32% 的增长」），不计为空洞。
+# 只有动作与数量/结果指标在同一分句中明确相连时豁免。
+# 年份、日期、版本号和编号不证明动作具体。
 _SPECIFICITY_EXEMPT = {"6_translationese", "17_hollow_action", "2_universal_verbs"}
-_SPECIFIC_RE = re.compile(r"\d|[%％‰]|[一二两三四五六七八九十百千万]+(?:个|次|项|人|天|周|月|年|倍|元|条|篇|款)")
-_SPECIFIC_WINDOW = 12
+_MEASURE = re.compile(
+    r"(?:\d+(?:\.\d+)?|[一二两三四五六七八九十百千万]+)\s*"
+    r"(?:[%％‰]|个|次|项|人|天|周|个月|倍|元|条|篇|款|毫秒|秒|小时|MB|GB|QPS)(?![A-Za-z])|"
+    r"(?:QPS|P99|延迟|耗时|吞吐量)\s*(?:到|为|达到|降至)?\s*\d+(?:\.\d+)?", re.I)
+_OUTCOME = re.compile(r"增长|提升|实现|降低|减少|缩短|省|节省|达到|降至|增至|到|完成|覆盖|测试|压测|上线|交付|处理|构建|整合")
 
 
 def _is_specific(prose: str, m: re.Match) -> bool:
-    s = max(0, m.start() - _SPECIFIC_WINDOW)
-    e = min(len(prose), m.end() + _SPECIFIC_WINDOW)
-    return bool(_SPECIFIC_RE.search(prose[s:e]))
+    left = re.split(r"[。！？；;\n]", prose[:m.start()])[-1]
+    right = re.split(r"[。！？；;\n]", prose[m.end():], maxsplit=1)[0]
+    clause = left[-40:] + m.group(0) + right[:60]
+    # 去掉日期/版本，避免「2026年」「v2.1」「第3项」给空泛动作背书。
+    clause = re.sub(r"\d{4}年(?:\d{1,2}月(?:\d{1,2}日)?)?|[vV]\d+(?:\.\d+)+|第\d+[项条次]", "", clause)
+    action_end = min(len(left[-40:]) + len(m.group(0)), len(clause))
+    for measure in _MEASURE.finditer(clause):
+        start = max(0, measure.start() - 12)
+        context = clause[start:min(len(clause), measure.end() + 8)]
+        # 不能用另一分句中的普通数字给当前动作豁免。
+        if _OUTCOME.search(context) and measure.end() >= action_end - 12:
+            return True
+    return False
 
 
 # 对冲堆叠（上游 #54）：同一句里 ≥2 个**不同的**对冲词。
@@ -661,23 +541,11 @@ def detect_dash_heavy_paragraphs(text: str) -> int:
     return sum(1 for ln in text.split("\n") if ln.count("——") >= 3)
 
 
-def _strip_code(text: str) -> str:
-    text = _strip_feishu_tables(text)
-    text = re.sub(r"```.*?```", " ", text, flags=re.S)
-    text = re.sub(r"~~~.*?~~~", " ", text, flags=re.S)
-    return re.sub(r"`[^`\n]*`", " ", text)
-
-
 # ---------------------------------------------------------------- 扫描
 def scan(raw_text: str) -> dict:
-    prose = strip_markdown_furniture(strip_quoted_spans(raw_text))
-    # 机器痕迹 / 格式类在「去掉代码块的原文」上扫：链接 URL、加粗、emoji
-    # 在剥 markdown 之后就看不到了。
-    raw_nocode = _strip_code(strip_quoted_spans(raw_text))
-    chars = max(zh_count(prose), 1)
-    per_k = chars / 1000.0
-
-    result: dict = {}
+    prose, rhythm_prose, raw_nocode, coverage = prepare_scopes(raw_text, _backend())
+    chars = zh_count(prose)
+    per_k = max(chars, 1) / 1000.0
     fired: dict[str, dict] = {}
 
     # --- 词表 pattern（密度判定）---
@@ -693,11 +561,7 @@ def scan(raw_text: str) -> dict:
         density = count / per_k
         if count == 0:
             continue
-        # 判定只看密度。
-        # 曾经有个「绝对次数 ≥3 也放行」的例外，那是个 bug：2000 字的周报规范
-        # 里「闭环」出现 3 次（密度 1.5）就被判成 AI 味，而那本就是人写的规范
-        # 文档，「闭环」在那里是术语。短文本已经由 count==0 之外的密度天然保护
-        # ——200 字里 1 次就是密度 5，自然超阈值。
+        # 密度定位表达线索；短样本仍由可信度提醒，不据此自动改稿。
         if density < thresh:
             continue
         samples = []
@@ -733,9 +597,9 @@ def scan(raw_text: str) -> dict:
         fired["62_invisible_chars"] = {"label": "零宽字符", "count": inv,
                                        "density": round(inv / per_k, 2),
                                        "tier": "defect", "samples": []}
-    if _UP:
+    if _backend():
         try:
-            hom = _UP.detect_homoglyphs(prose)
+            hom = _backend().detect_homoglyphs(prose)
             if hom:
                 fired["66_homoglyphs"] = {"label": "同形异码字符", "count": len(hom),
                                            "density": round(len(hom) / per_k, 2),
@@ -744,13 +608,13 @@ def scan(raw_text: str) -> dict:
             pass
 
     # --- 统计类 ---
-    sents = zh_split_sentences(prose)
+    sents = zh_split_sentences(rhythm_prose)
     burst = burstiness(sents)
     if burst.get("monotonous"):
         fired["40_sentence_monotony"] = {"label": "句长单调", "count": 1,
                                           "density": 1.0, "tier": "rhythm",
                                           "samples": [f"cv={burst['cv']}"]}
-    paras = zh_split_paragraphs(prose)
+    paras = zh_split_paragraphs(rhythm_prose)
     pm = paragraph_monotony(paras)
     if pm.get("monotonous"):
         fired["44_uniform_paragraph"] = {"label": "段落长度一致", "count": 1,
@@ -761,7 +625,7 @@ def scan(raw_text: str) -> dict:
             "label": "段首重复", "count": o["count"], "density": round(o["count"] / max(len(paras), 1) * 1000, 2),
             "tier": "rhythm", "samples": [o["opener"]]})
     # --- 对冲堆叠（上游 #54，对齐上游归入 report-only，供改写时删减，不计分）---
-    hedges = detect_hedge_stack(sents)
+    hedges = detect_hedge_stack(zh_split_sentences(prose))
     if hedges and len(hedges) / per_k >= 1.0:
         fired["54_hedge_stack"] = {"label": "对冲堆叠", "count": len(hedges),
                                    "density": round(len(hedges) / per_k, 2),
@@ -795,7 +659,7 @@ def scan(raw_text: str) -> dict:
                               "density": round(len(emojis) / per_k, 2),
                               "tier": "report", "samples": list(dict.fromkeys(emojis))[:3]}
 
-    deg = detect_degenerate_repetition(prose)
+    deg = detect_degenerate_repetition(rhythm_prose)
     # 「同一片段反复出现」有两种：模型卡壳（同一句连续重复很多次）和
     # 正常文档里同一个标签被反复引用（每个片段只出现 2 次）。
     # 用 max_count 区分：真退化重复的片段会连续出现 4 次以上。
@@ -804,8 +668,14 @@ def scan(raw_text: str) -> dict:
                                              "density": round(deg["ratio"], 3),
                                              "tier": "decisive", "samples": []}
 
-    score = ai_tell_score(fired, chars, burst, pm)
+    score = (ai_tell_score(fired, chars, burst, pm) if chars else
+             {"score": None, "band": "unassessed"})
     fired["_metrics"] = {
+        "assessment_status": "ok" if chars else "no_analyzable_text",
+        "extraction_status": "provided_text",
+        "coverage": coverage,
+        "backend": "bundled-0.9.6" if _backend() is _BUNDLED else "external",
+        "pattern_count": len(_ZH_PATTERNS),
         "zh_chars": chars,
         "sentences": len(sents),
         "paragraphs": len(paras),
@@ -816,7 +686,7 @@ def scan(raw_text: str) -> dict:
         "patterns_flagged": len([k for k in fired if not k.startswith("_")]),
     }
     fired["_metrics"].update(score_confidence(chars, len([
-        k for k in fired if not k.startswith("_") and fired[k].get("tier") not in ("report",)])))
+        k for k in fired if not k.startswith("_") and fired[k].get("tier") not in ("report", "defect")])))
     return fired
 
 
@@ -918,78 +788,71 @@ def score_confidence(chars: int, families: int) -> dict:
                 "confidence_reason": f"{chars} 字且只有 {families} 类命中：证据不足。"}
     if chars < _CONF_SOLID:
         return {"confidence": "moderate",
-                "confidence_reason": f"{chars} 字：可用，但到 { _CONF_SOLID } 字分数才稳。"}
-    return {"confidence": "high", "confidence_reason": ""}
+                "confidence_reason": f"{chars} 字：样本量中等，仍需逐句复核。"}
+    return {"confidence": "high", "confidence_reason": "样本较长；这不是准确率或语义质量保证。"}
 
 
-# ---------------------------------------------------------------- 格式提取
+# ---------------------------------------------------------------- 格式提取与 CLI
+class ExtractionError(ValueError):
+    pass
+
+
 def extract_text(path: Path) -> tuple[str, str]:
-    """返回 (文本, 语法)。优先用上游的 read_source（覆盖 docx/epub/odt/ipynb）。"""
-    if _UP:
-        try:
-            text, newline = _UP.read_source([str(path)])
-            return text, "markdown"
-        except Exception:
-            pass
+    """提取失败不返回空字符串；不支持的格式拒绝分析。"""
     suffix = path.suffix.lower()
-    if suffix == ".ipynb":
-        try:
-            import json as _json
-
-            nb = _json.loads(path.read_text(errors="ignore"))
-            cells = [c.get("source", "") for c in nb.get("cells", [])
-                     if c.get("cell_type") == "markdown"]
-            return "\n\n".join("".join(c) for c in cells), "markdown"
-        except Exception:
-            return path.read_text(errors="ignore"), "markdown"
-    if suffix in (".docx", ".docm", ".pptx", ".pptm", ".xlsx",
-                  ".xlsm", ".odt", ".odp", ".ods", ".epub"):
-        try:
-            return _extract_office(path), "markdown"
-        except Exception:
-            return "", "markdown"
-    return path.read_text(errors="ignore"), "markdown"
-
-
-def _extract_office(path: Path) -> str:
-    members = {
-        ".docx": ("word/document.xml",), ".docm": ("word/document.xml",),
-        ".pptx": ("ppt/slides/slide",), ".pptm": ("ppt/slides/slide",),
-        ".xlsx": ("xl/sharedStrings.xml", "xl/worksheets/sheet"),
-        ".xlsm": ("xl/sharedStrings.xml", "xl/worksheets/sheet"),
-        ".odt": ("content.xml",), ".odp": ("content.xml",), ".ods": ("content.xml",),
-        ".epub": (".xhtml", ".html"),
-    }[path.suffix.lower()]
-    out = []
-    with zipfile.ZipFile(path) as z:
-        for name in z.namelist():
-            if any(name.endswith(m) or m in name for m in members):
-                xml = z.read(name).decode("utf-8", "ignore")
-                xml = re.sub(r"</w:p>|</text:p>|<text:p\b[^>]*>|</text:p>", "\n", xml)
-                txt = re.sub(r"<[^>]+>", "", xml)
-                txt = (txt.replace("&amp;", "&").replace("&lt;", "<")
-                          .replace("&gt;", ">").replace("&quot;", '"'))
-                if txt.strip():
-                    out.append(txt.strip())
-    return "\n\n".join(out)
+    supported = {".md", ".mdx", ".markdown", ".txt", ".text", ".rst", ".org", ".adoc",
+                 ".docx", ".docm", ".pptx", ".pptm", ".xlsx", ".xlsm",
+                 ".odt", ".odp", ".ods", ".epub", ".ipynb"}
+    if suffix not in supported:
+        raise ExtractionError(f"不支持的文件格式：{suffix or '无扩展名'}")
+    try:
+        if suffix in _BUNDLED._ZIP_DOC:
+            text = extract_office(path, _backend())
+        elif suffix == ".ipynb":
+            nb = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(nb, dict) or not isinstance(nb.get("cells"), list):
+                raise ExtractionError("Notebook 缺少 cells 数组")
+            text = _backend().extract_notebook_text(str(path))
+        else:
+            text = path.read_text(encoding="utf-8-sig")
+        if not text.strip():
+            raise ExtractionError("未抽取到正文，不能评估")
+        return text.replace("\r\n", "\n").replace("\r", "\n"), "markdown"
+    except (OSError, ValueError, KeyError, TypeError, zipfile.BadZipFile, EOFError, ET.ParseError) as exc:
+        raise ExtractionError(f"{path.name}：{exc}") from exc
 
 
-# ---------------------------------------------------------------- CLI
 def main() -> int:
-    args = sys.argv[1:]
-    clean = "--clean" in args
-    args = [a for a in args if a != "--clean"]
-    if args:
-        path = Path(args[0])
-        text, _syn = extract_text(path)
-    else:
-        text = sys.stdin.buffer.read().decode("utf-8", "replace")
-    if clean:
-        sys.stdout.write(clean_text(text))
+    parser = argparse.ArgumentParser(description="中文编辑线索检测；分数不是作者身份判断。")
+    parser.add_argument("file", nargs="?", type=Path, help="输入文件；省略时读取 stdin")
+    parser.add_argument("--clean", action="store_true", help="只输出字符清洗结果，保留代码与逐字引文")
+    parser.add_argument("--list-patterns", action="store_true", help="输出由当前代码生成的规则目录")
+    args = parser.parse_args()
+    if args.list_patterns:
+        print(json.dumps({"count": len(_ZH_PATTERNS), "patterns": [
+            {"id": key, "label": val[0], "threshold": val[2], "tier": val[3]}
+            for key, val in _ZH_PATTERNS.items()]}, ensure_ascii=False, indent=2))
         return 0
-    result = scan(text)
-    sys.stdout.write(json.dumps(result, ensure_ascii=False, indent=2))
-    return 0
+    try:
+        text = extract_text(args.file)[0] if args.file else sys.stdin.buffer.read().decode("utf-8", "replace")
+        if args.clean:
+            if not text.strip():
+                raise ExtractionError("输入为空，不能清洗")
+            sys.stdout.write(clean_text(text))
+            return 0
+        result = scan(text)
+        result["_metrics"]["extraction_status"] = "ok" if args.file else "provided_text"
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result["_metrics"]["assessment_status"] == "ok" else 2
+    except ExtractionError as exc:
+        error = {"error": str(exc), "_metrics": {"extraction_status": "error",
+                 "assessment_status": "unassessed", "zh_chars": 0,
+                 "ai_tell_score": None, "ai_tell_band": "unassessed", "confidence": "none"}}
+        if args.clean:
+            print(json.dumps(error, ensure_ascii=False), file=sys.stderr)
+        else:
+            print(json.dumps(error, ensure_ascii=False))
+        return 2
 
 
 if __name__ == "__main__":
