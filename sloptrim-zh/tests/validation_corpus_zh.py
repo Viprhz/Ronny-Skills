@@ -1,28 +1,9 @@
 #!/usr/bin/env python3
-"""validation_corpus_zh.py — 中文校准语料 + 分离度检验。
+"""历史开发夹具：已参与调参，不是独立准确率或作者身份验证。
 
-对齐上游 sloptrim 的 `tests/validation_corpus.py` 做法：一组人写、一组模型写，
-检验仪器是否还能把这两组分开。这是校准夹具，不是「分数能鉴定作者」的证据——
-分数描述文本，不描述人。
-
-人写侧来源（真实语料，非编造）：
-- `human-diary`   用户 Obsidian 日记，2023-12-13
-- `human-okr`     用户 2025 OKR 自评
-- `human-worklog` Surge 规则复核日志（结构化列表）
-- `human-clipping` 罗永浩与 Gemini 对话（他人原文剪藏，说话人逐句格式）
-- `human-competitive` 小米 14 Ultra 竞品分析
-
-人写·业务侧来源（真实飞书知识库，2026-10-22 抓取）：
-- `b_sow_追觅` / `b_sow_畸变`  真实 SOW（产品规格）
-- `b_岗位JD`     高级产品经理岗位 JD（术语密集：闭环/赋能/可量产）
-- `b_人像战略`   产品线战略规划（差异化/聚焦/投入等管理术语）
-业务侧是「术语≠AI 腔」的边界检验：这些文档人写、术语密集，仪器不得判成 AI 味。
-
-模型侧为按中文 AI 腔公开特征特征仿写的样本（用于夹具，非声称某模型输出）。
-
-跑法：
-    python3 validation_corpus_zh.py          # 打印分离表
-    python3 validation_corpus_zh.py --json   # 机器可读
+既有片段的私人来源与人写归属未在本版本重新核实，分组仅兼容历史输出；
+模型侧也是特征仿写，不能当作多模型真实输出。不要用它们证明泛化。
+运行后打印分布，分离度只用于诊断，不作为唯一成功门槛。
 """
 from __future__ import annotations
 
@@ -73,9 +54,9 @@ HUMAN: dict[str, str] = {
 }
 
 
-# 人写·真实业务文档侧（来源：用户飞书知识库，2026-10-22 抓取，保留体裁）
+# 历史业务侧夹具：来源归属未重新核实，不能据此提供准确率或作者结论。
 # 这一侧不是日记/随笔，而是真实的 SOW、岗位 JD、战略规划、评测指南——
-# 体裁本身密集使用术语（闭环/赋能/可量产/差异化），是「术语≠AI 腔」的边界检验。
+# 体裁词汇可以触发提示，但不意味着必须修改必要术语。
 # 截断到 ~220 字与 AI 样本同量级，控制密度口径。
 BUSINESS: dict[str, str] = {
     "b_sow_追觅": """# **产品名称：场景识别**
@@ -159,7 +140,7 @@ def score(text: str) -> dict:
 
 def main() -> int:
     rows = []
-    for label, group in (("人写", HUMAN), ("人写·业务", BUSINESS), ("AI", AI)):
+    for label, group in (("旧低分组", HUMAN), ("旧业务组", BUSINESS), ("套话仿写组", AI)):
         for name, text in group.items():
             m = score(text)
             rows.append({
@@ -168,14 +149,14 @@ def main() -> int:
                 "band": m["ai_tell_band"], "confidence": m.get("confidence"),
             })
 
-    human_scores = [r["score"] for r in rows if r["group"].startswith("人写")]
-    ai_scores = [r["score"] for r in rows if r["group"] == "AI"]
+    human_scores = [r["score"] for r in rows if r["group"].startswith("旧")]
+    ai_scores = [r["score"] for r in rows if r["group"] == "套话仿写组"]
     gap = min(ai_scores) - max(human_scores)
 
     if "--json" in sys.argv:
         print(json.dumps({"rows": rows, "human_max": max(human_scores),
                           "ai_min": min(ai_scores), "gap": gap}, ensure_ascii=False, indent=2))
-        return 0 if gap > 0 else 1
+        return 0
 
     print(f"{'组':<8}{'样本':<16}{'字数':>6}{'分数':>6}  {'band':<14}{'confidence'}")
     print("-" * 62)
@@ -183,9 +164,9 @@ def main() -> int:
         print(f"{r['group']:<8}{r['name']:<16}{r['chars']:>6}{r['score']:>6}  "
               f"{r['band']:<14}{r['confidence']}")
     print("-" * 62)
-    print(f"人写最高 {max(human_scores)}   AI 最低 {min(ai_scores)}   间隔 {gap}")
-    print("分离检验:", "通过" if gap > 0 else "失败（两组重叠）")
-    return 0 if gap > 0 else 1
+    print(f"旧低分组最高 {max(human_scores)}   套话仿写组最低 {min(ai_scores)}   间隔 {gap}")
+    print("开发组分离观察:", "分开" if gap > 0 else "存在重叠（需结合编辑判断复核）")
+    return 0
 
 
 if __name__ == "__main__":

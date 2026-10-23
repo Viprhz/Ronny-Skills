@@ -1,0 +1,515 @@
+{
+  "threshold": 40,
+  "samples": 9,
+  "groups": {
+    "diagnostic:all": {
+      "tp": 0,
+      "tn": 6,
+      "fp": 0,
+      "fn": 3,
+      "unassessed": 0,
+      "manual_only": 0
+    },
+    "automatic:all": {
+      "tp": 0,
+      "tn": 2,
+      "fp": 0,
+      "fn": 1,
+      "unassessed": 0,
+      "manual_only": 6
+    },
+    "diagnostic:genre:公告": {
+      "tp": 0,
+      "tn": 1,
+      "fp": 0,
+      "fn": 1,
+      "unassessed": 0,
+      "manual_only": 0
+    },
+    "automatic:genre:公告": {
+      "tp": 0,
+      "tn": 0,
+      "fp": 0,
+      "fn": 0,
+      "unassessed": 0,
+      "manual_only": 2
+    },
+    "diagnostic:length:short": {
+      "tp": 0,
+      "tn": 2,
+      "fp": 0,
+      "fn": 1,
+      "unassessed": 0,
+      "manual_only": 0
+    },
+    "automatic:length:short": {
+      "tp": 0,
+      "tn": 0,
+      "fp": 0,
+      "fn": 0,
+      "unassessed": 0,
+      "manual_only": 3
+    },
+    "diagnostic:origin:model": {
+      "tp": 0,
+      "tn": 3,
+      "fp": 0,
+      "fn": 3,
+      "unassessed": 0,
+      "manual_only": 0
+    },
+    "automatic:origin:model": {
+      "tp": 0,
+      "tn": 1,
+      "fp": 0,
+      "fn": 1,
+      "unassessed": 0,
+      "manual_only": 4
+    },
+    "diagnostic:genre:技术说明": {
+      "tp": 0,
+      "tn": 1,
+      "fp": 0,
+      "fn": 1,
+      "unassessed": 0,
+      "manual_only": 0
+    },
+    "automatic:genre:技术说明": {
+      "tp": 0,
+      "tn": 0,
+      "fp": 0,
+      "fn": 1,
+      "unassessed": 0,
+      "manual_only": 1
+    },
+    "diagnostic:length:medium": {
+      "tp": 0,
+      "tn": 2,
+      "fp": 0,
+      "fn": 1,
+      "unassessed": 0,
+      "manual_only": 0
+    },
+    "automatic:length:medium": {
+      "tp": 0,
+      "tn": 0,
+      "fp": 0,
+      "fn": 0,
+      "unassessed": 0,
+      "manual_only": 3
+    },
+    "diagnostic:genre:会议纪要": {
+      "tp": 0,
+      "tn": 0,
+      "fp": 0,
+      "fn": 1,
+      "unassessed": 0,
+      "manual_only": 0
+    },
+    "automatic:genre:会议纪要": {
+      "tp": 0,
+      "tn": 0,
+      "fp": 0,
+      "fn": 0,
+      "unassessed": 0,
+      "manual_only": 1
+    },
+    "diagnostic:genre:随笔": {
+      "tp": 0,
+      "tn": 1,
+      "fp": 0,
+      "fn": 0,
+      "unassessed": 0,
+      "manual_only": 0
+    },
+    "automatic:genre:随笔": {
+      "tp": 0,
+      "tn": 1,
+      "fp": 0,
+      "fn": 0,
+      "unassessed": 0,
+      "manual_only": 0
+    },
+    "diagnostic:length:long": {
+      "tp": 0,
+      "tn": 2,
+      "fp": 0,
+      "fn": 1,
+      "unassessed": 0,
+      "manual_only": 0
+    },
+    "automatic:length:long": {
+      "tp": 0,
+      "tn": 2,
+      "fp": 0,
+      "fn": 1,
+      "unassessed": 0,
+      "manual_only": 0
+    },
+    "diagnostic:genre:正式文书": {
+      "tp": 0,
+      "tn": 3,
+      "fp": 0,
+      "fn": 0,
+      "unassessed": 0,
+      "manual_only": 0
+    },
+    "automatic:genre:正式文书": {
+      "tp": 0,
+      "tn": 1,
+      "fp": 0,
+      "fn": 0,
+      "unassessed": 0,
+      "manual_only": 2
+    },
+    "diagnostic:origin:human": {
+      "tp": 0,
+      "tn": 3,
+      "fp": 0,
+      "fn": 0,
+      "unassessed": 0,
+      "manual_only": 0
+    },
+    "automatic:origin:human": {
+      "tp": 0,
+      "tn": 1,
+      "fp": 0,
+      "fn": 0,
+      "unassessed": 0,
+      "manual_only": 2
+    }
+  },
+  "details": [
+    {
+      "id": "clear_short",
+      "genre": "公告",
+      "length": "short",
+      "source": "本次独立代理生成",
+      "origin": "model",
+      "labeler": "本次独立模型编辑判断；未由人工复核",
+      "needs_edit": false,
+      "metrics": {
+        "assessment_status": "ok",
+        "extraction_status": "provided_text",
+        "coverage": {
+          "input_units": 73,
+          "analyzed_units": 73,
+          "prose_units": 73,
+          "table_units": 0,
+          "table_cells": 0,
+          "protected_units": 0,
+          "rhythm_units": 73,
+          "analysis_coverage": 1.0
+        },
+        "backend": "bundled-0.9.6",
+        "pattern_count": 20,
+        "zh_chars": 73,
+        "sentences": 4,
+        "paragraphs": 1,
+        "length_cv": null,
+        "paragraph_cv": null,
+        "ai_tell_score": 0,
+        "ai_tell_band": "clean",
+        "patterns_flagged": 0,
+        "confidence": "none",
+        "confidence_reason": "73 字：太短，一个短语就能翻档，数字当噪声看。"
+      }
+    },
+    {
+      "id": "edit_short",
+      "genre": "公告",
+      "length": "short",
+      "source": "本次独立代理生成",
+      "origin": "model",
+      "labeler": "本次独立模型编辑判断；未由人工复核",
+      "needs_edit": true,
+      "metrics": {
+        "assessment_status": "ok",
+        "extraction_status": "provided_text",
+        "coverage": {
+          "input_units": 85,
+          "analyzed_units": 85,
+          "prose_units": 85,
+          "table_units": 0,
+          "table_cells": 0,
+          "protected_units": 0,
+          "rhythm_units": 85,
+          "analysis_coverage": 1.0
+        },
+        "backend": "bundled-0.9.6",
+        "pattern_count": 20,
+        "zh_chars": 85,
+        "sentences": 3,
+        "paragraphs": 1,
+        "length_cv": null,
+        "paragraph_cv": null,
+        "ai_tell_score": 0,
+        "ai_tell_band": "clean",
+        "patterns_flagged": 0,
+        "confidence": "none",
+        "confidence_reason": "85 字：太短，一个短语就能翻档，数字当噪声看。"
+      }
+    },
+    {
+      "id": "clear_medium",
+      "genre": "技术说明",
+      "length": "medium",
+      "source": "本次独立代理生成",
+      "origin": "model",
+      "labeler": "本次独立模型编辑判断；未由人工复核",
+      "needs_edit": false,
+      "metrics": {
+        "assessment_status": "ok",
+        "extraction_status": "provided_text",
+        "coverage": {
+          "input_units": 414,
+          "analyzed_units": 414,
+          "prose_units": 414,
+          "table_units": 0,
+          "table_cells": 0,
+          "protected_units": 0,
+          "rhythm_units": 414,
+          "analysis_coverage": 1.0
+        },
+        "backend": "bundled-0.9.6",
+        "pattern_count": 20,
+        "zh_chars": 414,
+        "sentences": 20,
+        "paragraphs": 5,
+        "length_cv": 0.379,
+        "paragraph_cv": 0.136,
+        "ai_tell_score": 11,
+        "ai_tell_band": "clean",
+        "patterns_flagged": 1,
+        "confidence": "low",
+        "confidence_reason": "414 字且只有 1 类命中：证据不足。"
+      }
+    },
+    {
+      "id": "edit_medium",
+      "genre": "会议纪要",
+      "length": "medium",
+      "source": "本次独立代理生成",
+      "origin": "model",
+      "labeler": "本次独立模型编辑判断；未由人工复核",
+      "needs_edit": true,
+      "metrics": {
+        "assessment_status": "ok",
+        "extraction_status": "provided_text",
+        "coverage": {
+          "input_units": 434,
+          "analyzed_units": 434,
+          "prose_units": 434,
+          "table_units": 0,
+          "table_cells": 0,
+          "protected_units": 0,
+          "rhythm_units": 434,
+          "analysis_coverage": 1.0
+        },
+        "backend": "bundled-0.9.6",
+        "pattern_count": 20,
+        "zh_chars": 434,
+        "sentences": 16,
+        "paragraphs": 5,
+        "length_cv": 0.458,
+        "paragraph_cv": 0.173,
+        "ai_tell_score": 9,
+        "ai_tell_band": "clean",
+        "patterns_flagged": 1,
+        "confidence": "low",
+        "confidence_reason": "434 字且只有 1 类命中：证据不足。"
+      }
+    },
+    {
+      "id": "clear_long",
+      "genre": "随笔",
+      "length": "long",
+      "source": "本次独立代理生成",
+      "origin": "model",
+      "labeler": "本次独立模型编辑判断；未由人工复核",
+      "needs_edit": false,
+      "metrics": {
+        "assessment_status": "ok",
+        "extraction_status": "provided_text",
+        "coverage": {
+          "input_units": 874,
+          "analyzed_units": 866,
+          "prose_units": 866,
+          "table_units": 0,
+          "table_cells": 0,
+          "protected_units": 8,
+          "rhythm_units": 866,
+          "analysis_coverage": 0.991
+        },
+        "backend": "bundled-0.9.6",
+        "pattern_count": 20,
+        "zh_chars": 866,
+        "sentences": 39,
+        "paragraphs": 8,
+        "length_cv": 0.373,
+        "paragraph_cv": 0.087,
+        "ai_tell_score": 12,
+        "ai_tell_band": "clean",
+        "patterns_flagged": 1,
+        "confidence": "high",
+        "confidence_reason": "样本较长；这不是准确率或语义质量保证。"
+      }
+    },
+    {
+      "id": "edit_long",
+      "genre": "技术说明",
+      "length": "long",
+      "source": "本次独立代理生成",
+      "origin": "model",
+      "labeler": "本次独立模型编辑判断；未由人工复核",
+      "needs_edit": true,
+      "metrics": {
+        "assessment_status": "ok",
+        "extraction_status": "provided_text",
+        "coverage": {
+          "input_units": 1137,
+          "analyzed_units": 1137,
+          "prose_units": 1137,
+          "table_units": 0,
+          "table_cells": 0,
+          "protected_units": 0,
+          "rhythm_units": 1137,
+          "analysis_coverage": 1.0
+        },
+        "backend": "bundled-0.9.6",
+        "pattern_count": 20,
+        "zh_chars": 1137,
+        "sentences": 34,
+        "paragraphs": 9,
+        "length_cv": 0.372,
+        "paragraph_cv": 0.066,
+        "ai_tell_score": 12,
+        "ai_tell_band": "clean",
+        "patterns_flagged": 1,
+        "confidence": "high",
+        "confidence_reason": "样本较长；这不是准确率或语义质量保证。"
+      }
+    },
+    {
+      "id": "udhr_short",
+      "genre": "正式文书",
+      "length": "short",
+      "source": "https://github.com/unicode-org/icu/blob/1cd98069ab360cf9d296719ce585b6dad2acd0c7/icu4j/perf-tests/data/udhr/udhr_cmn_hans.txt",
+      "origin": "human",
+      "labeler": "本次主模型按规范正式文书判断；未由人工复核",
+      "needs_edit": false,
+      "metrics": {
+        "assessment_status": "ok",
+        "extraction_status": "provided_text",
+        "coverage": {
+          "input_units": 82,
+          "analyzed_units": 82,
+          "prose_units": 82,
+          "table_units": 0,
+          "table_cells": 0,
+          "protected_units": 0,
+          "rhythm_units": 82,
+          "analysis_coverage": 1.0
+        },
+        "backend": "bundled-0.9.6",
+        "pattern_count": 20,
+        "zh_chars": 82,
+        "sentences": 2,
+        "paragraphs": 3,
+        "length_cv": null,
+        "paragraph_cv": null,
+        "ai_tell_score": 0,
+        "ai_tell_band": "clean",
+        "patterns_flagged": 0,
+        "confidence": "none",
+        "confidence_reason": "82 字：太短，一个短语就能翻档，数字当噪声看。"
+      }
+    },
+    {
+      "id": "udhr_medium",
+      "genre": "正式文书",
+      "length": "medium",
+      "source": "https://github.com/unicode-org/icu/blob/1cd98069ab360cf9d296719ce585b6dad2acd0c7/icu4j/perf-tests/data/udhr/udhr_cmn_hans.txt",
+      "origin": "human",
+      "labeler": "本次主模型按规范正式文书判断；未由人工复核",
+      "needs_edit": false,
+      "metrics": {
+        "assessment_status": "ok",
+        "extraction_status": "provided_text",
+        "coverage": {
+          "input_units": 530,
+          "analyzed_units": 530,
+          "prose_units": 530,
+          "table_units": 0,
+          "table_cells": 0,
+          "protected_units": 0,
+          "rhythm_units": 530,
+          "analysis_coverage": 1.0
+        },
+        "backend": "bundled-0.9.6",
+        "pattern_count": 20,
+        "zh_chars": 530,
+        "sentences": 9,
+        "paragraphs": 16,
+        "length_cv": 1.342,
+        "paragraph_cv": 1.036,
+        "ai_tell_score": 0,
+        "ai_tell_band": "clean",
+        "patterns_flagged": 0,
+        "confidence": "low",
+        "confidence_reason": "530 字且只有 0 类命中：证据不足。"
+      }
+    },
+    {
+      "id": "udhr_long",
+      "genre": "正式文书",
+      "length": "long",
+      "source": "https://github.com/unicode-org/icu/blob/1cd98069ab360cf9d296719ce585b6dad2acd0c7/icu4j/perf-tests/data/udhr/udhr_cmn_hans.txt",
+      "origin": "human",
+      "labeler": "本次主模型按规范正式文书判断；未由人工复核",
+      "needs_edit": false,
+      "metrics": {
+        "assessment_status": "ok",
+        "extraction_status": "provided_text",
+        "coverage": {
+          "input_units": 1562,
+          "analyzed_units": 1562,
+          "prose_units": 1562,
+          "table_units": 0,
+          "table_cells": 0,
+          "protected_units": 0,
+          "rhythm_units": 1562,
+          "analysis_coverage": 1.0
+        },
+        "backend": "bundled-0.9.6",
+        "pattern_count": 20,
+        "zh_chars": 1562,
+        "sentences": 53,
+        "paragraphs": 62,
+        "length_cv": 0.539,
+        "paragraph_cv": 0.944,
+        "ai_tell_score": 0,
+        "ai_tell_band": "clean",
+        "patterns_flagged": 0,
+        "confidence": "high",
+        "confidence_reason": "样本较长；这不是准确率或语义质量保证。"
+      }
+    }
+  ],
+  "limitation": "小样本只描述本次结果；自动矩阵排除低可信度，全体诊断矩阵保留这些样本。",
+  "public_source_manifest": {
+    "source": "https://github.com/unicode-org/icu/blob/1cd98069ab360cf9d296719ce585b6dad2acd0c7/icu4j/perf-tests/data/udhr/udhr_cmn_hans.txt",
+    "source_revision": "1cd98069ab360cf9d296719ce585b6dad2acd0c7",
+    "source_revision_date": "2021-02-22",
+    "source_sha256": "3963b114548c3a974ea01c072a725451212ab178584447e504c7daa91d904c8d",
+    "note": "历史公开正式文本；3个非重叠切片同源，不是3个独立作者/文档。源文不随发布包分发。",
+    "preprocessing": "移除原文本排版行缩进，避免把正式文书误当 Markdown 缩进代码；不修改字句。三个切片非重叠。"
+  },
+  "evaluator": "本次模型编辑判断，未由人工复核；不是严格盲法或普遍准确率验证",
+  "rewrite_checks": {
+    "cases": 5,
+    "passed": 5,
+    "method": "独立代理实际改写、逐条语义复核与共享保全辅助检查；保全脚本不证明语义等价"
+  },
+  "frozen_model_samples_sha256": "0d74572de8e906f47a3c4c2b2c2132a783cd09fb6902122fc574b9e0c09c24a4"
+}

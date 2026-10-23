@@ -1,107 +1,56 @@
-# 中文检测器的语料校准配方
+# 校准与行为评估
 
-改 `_ZH_PATTERNS` 任一条阈值、或修任何解析逻辑之后，按这个顺序验。
-判据是**分离是否仍成立**，不是「分数看起来对不对」。
+## 分清四种证据
 
-## 第一层：夹具分离检验（秒级，每次改都跑）
+1. **回归夹具**：`validation_corpus_zh.py` 的历史文本，已用于开发，不能叫独立测试集。过去的人写归属与私人来源声明未重新核实，不作为作者标签真值。
+2. **独立评估**：保留未参与调参的样本，冻结来源、版本、体裁与长度，由明确记录的编辑者标注是否需要编辑。人工原文、真实模型输出、人工修改后的模型稿分别记录；来源不明就标未知，不凭文风反推作者。
+3. **改写验收**：看实际输入/输出是否保住事实、义务、范围、引用、个人声音，不只看检测器分数。
+4. **历史外验**：旧文档提到的飞书与 Word 实验只代表当时状态。本版本未重跑时不复用数量、误报率或“零误判”的结论，也不把私人语料复制进发布包。
+
+## 每次改动的验证
 
 ```bash
-cd ~/.hermes/skills/productivity/sloptrim-zh/tests
-python3 validation_corpus_zh.py
+python3 -m unittest discover -s sloptrim-zh/tests -p 'test_*.py'
+python3 sloptrim-zh/tests/test_probes_zh.py
+python3 sloptrim-zh/tests/validation_corpus_zh.py --json
 ```
 
-判据：`AI 组最低分 > 人写组最高分`。当前基线：人写最高 20（业务文档组），
-AI 最低 48，间隔 28。**间隔变窄就是回归。**
+历史两组的分离度仅用于观察开发行为，不锁死具体分数，不要求它始终增大。来源待核查改为只报告后，套话稿分数降低是可解释的策略变更，不能因此恢复不实的“虚假”标签。
 
-## 第二层：真实飞书语料外验（防夹具过拟合）
+## 独立样本格式
 
-数据源在 `~/clawd/kb/`，三个 jsonl：
-`sow-space-all.jsonl`、`prod-space-all.jsonl`、`sow-standard.jsonl`。
-每条一个 JSON，正文在 `markdown` 字段，另有 `title` / `url` / `sha1`。
+`evaluate_corpus.py --corpus corpus.jsonl --threshold 40` 接受每行一个对象：
 
-去重与筛选（两个都必须做）：
-
-- 按 `sha1` 去重——同一个文档在多个空间重复出现，不去重会把同一篇算多次，
-  直接拉偏分布。
-- 只收 ≥800 字——过短文档被统计类 pattern 系统性抬分，混进来污染基线。
-
-```python
-import json, pathlib, re, importlib.util
-spec = importlib.util.spec_from_file_location(
-    "dz", "/Users/ronny/.hermes/skills/productivity/sloptrim-zh/scripts/detect_zh.py")
-dz = importlib.util.module_from_spec(spec); spec.loader.exec_module(dz)
-
-kb = pathlib.Path.home() / "clawd/kb"
-def zh_count(s):
-    return (len(re.findall(r"[\u4e00-\u9fff]", s)) + len(re.findall(r"[A-Za-z]+", s))
-            + len(re.findall(r"\d+", s)))
-
-docs = {}
-for fn in ["sow-space-all.jsonl", "prod-space-all.jsonl", "sow-standard.jsonl"]:
-    for line in (kb / fn).open(errors="ignore"):
-        try: r = json.loads(line)
-        except Exception: continue
-        md = r.get("markdown") or ""
-        if zh_count(md) < 800: continue
-        docs.setdefault(r.get("sha1"), {"title": r.get("title", ""), "md": md})
-
-for sha, d in docs.items():
-    m = dz.scan(d["md"])["_metrics"]
-    print(m["ai_tell_score"], d["title"][:50])
+```json
+{"id":"sample-01","text":"待评估全文","genre":"技术说明","source":"可核验地址或生成记录","origin":"human|model|unknown","split":"holdout","needs_edit":false,"labeler":"编辑者或模型标识"}
 ```
 
-当前基线（468 篇）：415 篇 0 分，中位 0，唯一 ≥25 分是真阳性（图注重复 73 次）。
-**0 分篇数下降就是回归。**
+- `needs_edit` 必须是复核后的编辑判断，不能由检测器自己生成；`labeler` 记录人工或模型评估者，模型判断不能冒充人工真值。它与作者来源不同。
+- 保留训练/开发/留出集合，不用留出集反复调阈值后仍叫独立测试。
+- 按体裁、短/中/长文本分别报告混淆矩阵、误报/漏报和无法评估数量。
+- 低可信度不进入自动编辑判断，单独报告覆盖率；同时给出全体可扫描样本的诊断矩阵，避免只排除难例后夸大表现。
+- 对原文→改稿运行 `check_preservation.py`，人工复核数字对应对象、条件、归属、因果和语气。脚本只能发现部分漂移。
+- 不要求所有人写稿低分，也不要求所有模型稿高分。关注可读性与需要修的表达。
 
-## 第三层：本地 docx 抽取实测
+本地 `tests/evaluation_samples.jsonl` 是有限的行为样本，来源在每条里注明；代理新生成的文本不能冒充真实人写语料。真实人写与多模型泛化仍需持续补充并单独报告，不能用小样本宣称普遍准确率。
 
-```python
-import importlib.util, pathlib
-spec = importlib.util.spec_from_file_location(
-    "dz", "/Users/ronny/.hermes/skills/productivity/sloptrim-zh/scripts/detect_zh.py")
-dz = importlib.util.module_from_spec(spec); spec.loader.exec_module(dz)
-for p in sorted((pathlib.Path.home()/"Downloads").glob("*.docx"))[:15]:
-    if p.name.startswith("~$"): continue          # Word 锁文件，不是文档
-    text, _ = dz.extract_text(p)
-    han = sum(1 for c in text if "\u4e00" <= c <= "\u9fff")
-    print(p.name[:40], len(text), han, dz.scan(text)["_metrics"]["ai_tell_score"])
-```
+## 改写行为验收任务
 
-判据：**抽不到汉字 = 抽取链路坏了**（不是「文档干净」）。15 篇真实 docx
-（SOW／需求／战略／画质要求）应全部有汉字、全部低分。
+给独立评估者本 skill、原始任务和必要材料，不提供预期改稿。使用 [rewrite-cases.json](../tests/rewrite-cases.json) 的真实请求形态，在临时目录输出结果；评估：
 
-## 夹具新增样本的规矩
-- **新样本截到与 AI 组同量级**（约 200–250 字）。密度是每千字算的，人写片段
-  截 800 字跟 AI 样本 200 字比，密度口径就不一致，结论无效。
-- **人写侧要按体裁铺开**，不能全是同一种文体。已有的 `BUSINESS` 组专门覆盖
-  「术语密集但人写」：SOW、岗位 JD、产品线战略。新增时优先补**没覆盖的体裁**，
-  不要堆同类。
-- 夹具里的文本必须**真实来源**，不能用想象的人写文风冒充——自己编的「人写样本」
-  会带自己以为的人写特征，校准出来的是自己的偏见。
-- 每加一篇，在 `validation_corpus_zh.py` 顶部的 docstring 里登记来源一句。
+- 事实和义务是否保留，是否补造数字、人物、来源或细节；
+- SOW/纪要是否保持规范结构，是否为了降分损伤表达；
+- 干净稿是否只做必要修改，代码与逐字引文是否逐字保留；
+- 高分却必须保留的表达能否停止继续改写。
 
-## 灰区文档：逐篇读，不要只看汇总
+保存模型/评估者、实际输出与复核结果。通过意味着这些任务通过，不能证明以后任意改写都正确。
 
-噪声线以上的每一篇都要拉出命中原文逐条判断，四分类（真命中／体裁误配／噪声／
-确认 bug）见 SKILL.md「灰区文档怎么判」。要点：
+## 本版实测记录
 
-- **报给用户时逐篇给全事实**：标题、分数、字数、命中模式与次数/密度、被命中的原句、
-  链接。不能用「那几篇」带过。
-- 把「实测复现的 bug」和「我的口径推断」分开写，后者要用户拍板。
-- 用户已拍板：企业文书腔（赋能／打造／进行+动词／闭环）在内部文档里**也算 AI 腔**，
-  不豁免。
+结果保存于 [evaluation-report.json](../tests/evaluation-report.json)，实际改稿见 [rewrite-results.json](../tests/rewrite-results.json)。
 
-## 拉单篇命中原文
-
-```python
-res = dz.scan(md)
-for k, v in res.items():
-    if k.startswith("_") or v.get("tier") == "report":
-        continue
-    print(f"[{v['label']}] x{v['count']} 密度{v['density']}")
-    for s in v.get("samples", [])[:3]:
-        print("   …", s.strip(), "…")
-```
-
-`_metrics` 里的 `confidence` 和 `band` 一起看：分数高但 `confidence=low` 且字数很小，
-基本是抽样噪声。
+- 冻结的 6 篇本次独立代理模型文本：清晰/需要编辑各 3 篇，两组各覆盖短、中、长文本。没有根据检测分数改写输入。代理在生成前读过 skill，不能称为严格盲法。
+- 另用 Unicode ICU 在 2021 年收入的中文《世界人权宣言》公开正式文本，移除印刷行缩进后取 3 个非重叠长度切片；同属一篇源文，不是 3 个独立作者。源版本、哈希、预处理写在结果清单中，不分发原文。
+- 编辑标签由本次模型评估者判断，尚未由人工复核。以 40 分观察，9 条样本的诊断矩阵为 TP=0、TN=6、FP=0、FN=3；低可信度 6 条单列。**三篇需要编辑的模型稿全被判为低分**，因此评分不能作为自动验收门槛；一般冗余和结构性问题仍依赖流程中的语义审读。
+- 5 条实际改写任务的语义复核及保全辅助检查通过，涵盖 SOW、纪要、干净稿、代码/引文/占位符和缺源转述。这里只证明这些任务通过，不证明所有未来改写都正确。
+- 未重跑私人飞书与 Word 大规模历史实验；未声称跨模型泛化准确率。
