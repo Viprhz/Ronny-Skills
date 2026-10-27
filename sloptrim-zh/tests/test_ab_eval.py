@@ -81,7 +81,7 @@ class HarnessTests(unittest.TestCase):
         self.assertEqual(r["counts"]["win"], 12)
         self.assertGreater(r["mean_delta"]["clarity"], 0)
         self.assertFalse(r["evidence_requirements_met"])
-        self.assertEqual(r["status"], "inconclusive_or_not_improved")
+        self.assertEqual(r["status"], "insufficient_evidence")
 
     def test_synthetic_holdout_proves_only_the_calculator(self):
         m = ab.prepare([sample(i, "holdout") for i in range(30)], 99)
@@ -144,7 +144,7 @@ class HarnessTests(unittest.TestCase):
                                text=True, capture_output=True)
             self.assertEqual(p.returncode, 0, p.stderr)
             self.assertEqual(json.loads(report_file.read_text(encoding="utf-8"))["status"],
-                             "inconclusive_or_not_improved")
+                             "insufficient_evidence")
 
 
 if __name__ == "__main__":
