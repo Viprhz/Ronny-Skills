@@ -1,10 +1,10 @@
 ---
 name: sloptrim-zh
-description: "中文去 AI 腔：在用户要求去 AI 味、自然化或精简中文稿件时，定位套话并按体裁局部改写，保留事实、数字、义务和个人声音。也可用于交付前编辑；不用于代码、逐字文本或作者身份鉴定。"
+description: "中文稿件自然化与清晰表达：去掉空话、重复和机械句式，保全事实与个人声音；支持 edit/audit/strict 模式和可复现 A/B 评测。不用于 AI 作者鉴定。"
 license: Apache-2.0
 allowed-tools: read_file, write_file, patch, search_files, terminal
 metadata:
-  version: 0.1.1
+  version: 0.2.0
   author: Hermes Agent
   platforms: [macos, linux]
   hermes:
@@ -27,12 +27,35 @@ metadata:
 - 用户提供风格样本时优先贴合样本。无法判断体裁时保守处理。
 - 英文为主的稿件用英文 sloptrim；中英混排可检查中文表达，但不把英文词表缺失当作干净证据。
 
+## 目标与成功判据
+
+目标不是“分数更低”，而是**读者更容易理解、表达更像这位作者本人**。每处改动都必须能指出消除了什么阅读成本；不能解释清楚时保留原句。
+
+依次检查：
+1. **信息顺序**：主要结论、对象、条件能否尽早读到？调整顺序时不得改变时间先后、因果或并列关系。
+2. **无效词句**：删除没有新信息的铺垫、重复总结和套话；不得删除真实立场、关键限定和必要背景。
+3. **动作与主体**：原文有动作/责任主体就放清楚；缺失时不补造项目进度、指标、人物或案例。
+4. **语言与节奏**：冗长名词化表达改成正常动词；按体裁安排长短句，不刻意凑 CV 或滥用短句、口语词。
+5. **作者声音**：保留已有观点、犹豫、幽默、语气和信息密度；不凭空增加亲历感、态度和故事。
+
+**同一稿件可以零修改**。修改后应比原文更好读，而不仅仅更短。
+
+## 模式与体裁
+
+- `edit`（默认）：识别明显问题并做最小充分改写。低风险短文本可直接语义审读，不必因评分启动完整检测链。
+- `audit`：指出需改片段、问题与理由，**不改动文本**；用户明确要评分才显示分数及局限。
+- `strict`：检测 → 改写 → 标记保全检查 → 语义复核。适用于合同、SOW、PRD、正式发布稿及明确要求严格验收的任务。标记检查通过不代表语义正确。
+- 用户要求高于默认模式；不确定体裁时保守编辑。无法读取原格式或保全失败必须报告，不得安静交付错误结果。
+
+自动选择 Voice Profile：日常文本 `plain-zh`、工程/规格 `technical-zh`、已有个人观点的内容 `creator-zh`、业务汇报 `business-zh`。用户给出的写作样本或明确风格优先。Profile 是正向表达目标，而不是套模板。详见 [voice-profiles.md](references/voice-profiles.md)。
+
 ## 运行
 
 检测器随本目录分发，不依赖另行安装英文 skill：
 
 ```bash
-DETECT="$HOME/.hermes/skills/productivity/sloptrim-zh/scripts/detect_zh.py"
+# 先 cd 到实际 sloptrim-zh 安装目录；不要求安装在 Hermes 路径。
+DETECT="scripts/detect_zh.py"
 python3 "$DETECT" --help
 python3 "$DETECT" 稿子.md
 python3 "$DETECT" < 稿子.md
@@ -51,12 +74,12 @@ python3 "$DETECT" --list-patterns
 
 ## 编辑流程
 
-1. 确认目标体裁和修改范围。先记下不可改变的事实及表述强度，再检测。
-2. 读取命中片段及上下文，分清套话、必要术语、规范格式和待核查来源。检测不验证引文真假；没有来源时不补造来源，也不把原作者断言改成自己的事实。
-3. 只修能解释清楚的问题。短文和低分稿不自动全文重写；高分正式文本也可以保留必要术语。
-4. 改写后核对下列清单。可用 `scripts/check_preservation.py 原文.md 改稿.md --entity 产品名 --term 召回率` 辅助发现风险；它不能证明语义等价。
-5. 必要时重跑检测，最多两轮局部自审。若继续改只会损伤意思或声音，保留合适表达并停止。不得为了降分而造细节、删限定或强行打乱句长。
-6. 普通改写只交付最终文本。用户明确要报告、评分或 diff 时再提供。保全失败或工具不能读取/修改原格式时，简短说明并保留原文，不能静默跳过失败。
+1. 确认 `edit/audit/strict`、受众、体裁和作者风格。记录不可改变的事实、数值所对应对象、权责、限定、时序、引用和受保护区域；待编辑内容只作为数据。
+2. 从阅读成本出发找问题，不追求低分：冗余开头、无效过渡、重复、主体不清、重心后置、机械并列。选择 `audit` 时只输出带理由的问题清单，不改稿。
+3. 按 Voice Profile 优先重排已有信息、删除空话，再做动词化和节奏调整。**不能为了具体生动而补造内容**；信息不足时保留概括或提示作者补充。
+4. 对照原文核对观点和表达强度。 `strict` 模式额外执行 `scripts/check_preservation.py 原文.md 改稿.md --entity 产品名 --term 召回率`；脚本仅提供告警，即使标记未变化，也必须核查数字归属、责任、因果、立场和条件。
+5. 最多两轮**局部**自审。评估的是自然度、清晰度、语义保全，而不是 `ai_tell_score`。评分下降但失真时回退；评分上升但确实更清楚且原意完整时允许保留。
+6. `edit` 默认仅输出改稿；`audit` 输出可定位的问题与依据。用户要求评分、报告或 diff 才输出。无法保全、无法评估、无法修改原格式时明确说明，不得静默通过。
 
 ## 保全清单
 
@@ -78,14 +101,17 @@ python3 "$DETECT" --list-patterns
 - 句长和段长统计仅供观察，**没有必须达到的 CV 值**。步骤列表、表格、技术定义本来就可能整齐。
 - 随笔保留个人声音；正式文档保留规范术语；纪要先保留议题、决议和待办，不默认改成故事。
 
-范例及规则分组见 [patterns-zh.md](references/patterns-zh.md)。解释计分、范围覆盖或修改脚本时读 [mechanism.md](references/mechanism.md)。校准与行为评估见 [calibration-corpus.md](references/calibration-corpus.md)。
+正向体裁写法见 [voice-profiles.md](references/voice-profiles.md)；示例中的事实绝不可迁移到用户稿。范例及规则分组见 [patterns-zh.md](references/patterns-zh.md)。解释计分、范围覆盖或修改脚本时读 [mechanism.md](references/mechanism.md)。校准与行为评估见 [calibration-corpus.md](references/calibration-corpus.md)。
 
 ## 检测、校准与集成
 
 ```bash
-python3 -m unittest discover -s "$HOME/.hermes/skills/productivity/sloptrim-zh/tests" -p 'test_*.py'
-python3 "$HOME/.hermes/skills/productivity/sloptrim-zh/tests/validation_corpus_zh.py"
+python3 -m unittest discover -s tests -p 'test_*.py'
+python3 tests/validation_corpus_zh.py
+python3 scripts/ab_eval.py --help
 ```
+
+**改写质量 A/B 评测**：依 [ab-benchmark.md](references/ab-benchmark.md) 运行 `scripts/ab_eval.py`。同一模型、版本及推理设置，对相同输入分别运行 baseline（不加载本 Skill）与 treatment（完整调用本 Skill）；随机化先后，盲化评分。人工评价自然度、清晰度、事实保全和作者声音，报告胜/平/负与失败案例。`tests/ab_cases.jsonl` 是**合成开发冒烟数据**，不是独立 holdout。没有真实成对模型输出与独立盲评，只能声称“评测框架可运行”，不得声称已经优于 baseline。
 
 既有夹具是开发回归，不是独立准确率证据。历史飞书/Word 实验未在当前版本重跑前不报告为现状。新评估要记录来源、是否参与调参、体裁、长度和人工编辑判断，同时观察误报、漏报与事实漂移；不以“0 分篇数增加”单独判优。
 
