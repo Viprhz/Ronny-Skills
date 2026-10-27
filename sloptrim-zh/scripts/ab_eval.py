@@ -60,6 +60,9 @@ def prepare(cases: list[dict], seed: int) -> dict:
             raise ValueError(f"{row['id']}: needs text/request/genre/source/split")
         if row["split"] not in ("development", "holdout"):
             raise ValueError(f"{row['id']}: split must be development or holdout")
+    canonical = json.dumps([ids[k] for k in sorted(ids)], ensure_ascii=False,
+                           sort_keys=True, separators=(",", ":"))
+    corpus_sha256 = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
     rng = random.Random(seed)
     pairs = []
     for row in sorted(ids.values(), key=lambda r: r["id"]):
@@ -71,7 +74,8 @@ def prepare(cases: list[dict], seed: int) -> dict:
                       "B": "baseline" if skill_is_a else "skill",
                       "execution_order": (["skill", "baseline"] if rng.getrandbits(1)
                                           else ["baseline", "skill"])})
-    return {"protocol": "sloptrim-zh-paired-v1", "seed": seed, "cases": pairs}
+    return {"protocol": "sloptrim-zh-paired-v1", "seed": seed,
+            "corpus_sha256": corpus_sha256, "cases": pairs}
 
 
 def validate_manifest(manifest: dict) -> dict:
@@ -96,6 +100,15 @@ def response_index(rows: list[dict], cases: dict) -> dict:
             if field not in row or not row[field]:
                 raise ValueError(f"{key}: missing reproducibility metadata: {field}")
         data[key] = row
+    globally_consistent = {"model": set(), "settings": set(), "runner": set()}
+    for row in data.values():
+        if not isinstance(row["model"], str) or not isinstance(row["settings"], dict) or not isinstance(row["runner"], str):
+            raise ValueError("model/runner must be strings and settings must be a JSON object")
+        globally_consistent["model"].add(row["model"])
+        globally_consistent["runner"].add(row["runner"])
+        globally_consistent["settings"].add(json.dumps(row["settings"], sort_keys=True, ensure_ascii=False))
+    if any(len(values) != 1 for values in globally_consistent.values()):
+        raise ValueError("model/settings/runner must be identical across the entire A/B batch")
     for case_id in cases:
         left, right = data.get((case_id, "baseline")), data.get((case_id, "skill"))
         if left is None or right is None:
@@ -204,6 +217,7 @@ def report(manifest: dict, responses: list[dict], ratings: list[dict]) -> dict:
                for arm in ("baseline", "skill")}
     return {
         "protocol": manifest["protocol"], "n": n, "seed": manifest["seed"],
+        "corpus_sha256": manifest.get("corpus_sha256"),
         "split": "holdout" if is_independent else "development_or_mixed",
         "counts": counts, "model": sorted({str(v["model"]) for v in index.values()}),
         "runner": sorted({str(v["runner"]) for v in index.values()}),
@@ -211,6 +225,9 @@ def report(manifest: dict, responses: list[dict], ratings: list[dict]) -> dict:
         "preference_bootstrap_lower_95": lcb,
         "mean_delta": {d: round(statistics.mean(values), 3) for d, values in delta_by_dim.items()},
         "hard_error_cases": hard_errors, "min_raters_per_case": min_raters,
+        "per_genre": {genre: {outcome: sum(1 for d in details if d["genre"] == genre and d["outcome"] == outcome)
+                              for outcome in ("win", "tie", "loss")}
+                      for genre in sorted({d["genre"] for d in details})},
         "mean_wall_seconds": {arm: (round(statistics.mean(v), 3) if v else None)
                               for arm, v in elapsed.items()},
         "status": ("improved_on_this_holdout" if improved else
