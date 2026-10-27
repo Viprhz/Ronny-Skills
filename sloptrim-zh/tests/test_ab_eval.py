@@ -114,6 +114,29 @@ class HarnessTests(unittest.TestCase):
             self.assertEqual(rows[0]["arm"], m["cases"][0]["execution_order"][0])
             ab.response_index(rows, ab.validate_manifest(m))
 
+    def test_agent_adapter_differentiates_arms_and_writes_trace(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            mock = root / "mock.py"
+            mock.write_text("import sys\nprompt=sys.stdin.read()\n"
+                            "print('SKILL' if '此次实验启用 sloptrim-zh' in prompt else 'BASELINE')\n",
+                            encoding="utf-8")
+            params = {"id": "sample1", "request": "改得自然一些。",
+                      "text": "请进一步赋能业务协同。"}
+            for arm, expected in (("baseline", "BASELINE"), ("skill", "SKILL")):
+                p = dict(params, arm=arm)
+                adapter = ROOT / "scripts" / "ab_agent_adapter.py"
+                cmd = [sys.executable, str(adapter), "--arm", arm,
+                       "--agent-command", f"{sys.executable} {mock}",
+                       "--cwd", td, "--trace-dir", str(root / "traces")]
+                r = subprocess.run(cmd, input=json.dumps(p, ensure_ascii=False),
+                                   text=True, capture_output=True)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertEqual(r.stdout.strip(), expected)
+                trace = json.loads((root / "traces" / f"sample1-{arm}.json").read_text())
+                self.assertEqual(trace["arm"], arm)
+                self.assertEqual(bool(trace["skill_sha256"]), arm == "skill")
+
     def test_cli_end_to_end_without_model_calls(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
