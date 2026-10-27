@@ -1,0 +1,38 @@
+name: sloptrim-zh tests
+on:
+  pull_request:
+    paths:
+      - 'sloptrim-zh/**'
+      - '.github/workflows/sloptrim-zh.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'sloptrim-zh/**'
+      - '.github/workflows/sloptrim-zh.yml'
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Compile scripts
+        run: python -m compileall -q sloptrim-zh/scripts sloptrim-zh/tests
+      - name: Run regression tests
+        working-directory: sloptrim-zh
+        run: python -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Run development corpus diagnostics (NOT quality evidence)
+        working-directory: sloptrim-zh
+        run: python tests/validation_corpus_zh.py --json > /tmp/dev-corpus-report.json
+      - name: Smoke-test reproducible A/B manifest
+        working-directory: sloptrim-zh
+        run: |
+          python scripts/ab_eval.py prepare --cases tests/ab_cases.jsonl --out /tmp/sloptrim-ab-manifest.json --seed 20261027
+          python -c "import json; m=json.load(open('/tmp/sloptrim-ab-manifest.json')); assert len(m['cases']) == 12"
