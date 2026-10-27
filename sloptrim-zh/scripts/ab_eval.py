@@ -13,6 +13,7 @@ import random
 import shlex
 import subprocess
 import statistics
+import time
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -154,7 +155,7 @@ def report(manifest: dict, responses: list[dict], ratings: list[dict]) -> dict:
         grouped[case_id].append(rating)
     if set(grouped) != set(cases):
         raise ValueError("incomplete blind reviews: every case needs a review")
-    details, margins, natural, clear = [], [], [], []
+    details, margins, delta_by_dim = [], [], {d: [] for d in DIMENSIONS}
     counts = {"win": 0, "tie": 0, "loss": 0}
     hard_errors = {"baseline": 0, "skill": 0}
     for case_id, case in cases.items():
@@ -175,8 +176,8 @@ def report(manifest: dict, responses: list[dict], ratings: list[dict]) -> dict:
         outcome = "win" if preference > 0.5 else "loss" if preference < 0.5 else "tie"
         counts[outcome] += 1
         margins.append(preference)
-        natural.append(statistics.mean(per_dim["naturalness"]))
-        clear.append(statistics.mean(per_dim["clarity"]))
+        for dim in DIMENSIONS:
+            delta_by_dim[dim].append(statistics.mean(per_dim[dim]))
         for arm in ("baseline", "skill"):
             hard_errors[arm] += int(err[arm])
         details.append({"id": case_id, "genre": case["genre"], "split": case["split"],
@@ -192,8 +193,15 @@ def report(manifest: dict, responses: list[dict], ratings: list[dict]) -> dict:
     is_independent = all(row["split"] == "holdout" for row in cases.values())
     min_raters = min(len(grouped[c]) for c in cases)
     sufficient = n >= 30 and min_raters >= 2 and is_independent and len({c["genre"] for c in cases.values()}) >= 3
-    improved = (sufficient and lcb > 0.5 and statistics.mean(natural) > 0
-                and statistics.mean(clear) > 0 and hard_errors["skill"] <= hard_errors["baseline"])
+    improved = (sufficient and lcb > 0.5
+                and statistics.mean(delta_by_dim["naturalness"]) > 0
+                and statistics.mean(delta_by_dim["clarity"]) > 0
+                and statistics.mean(delta_by_dim["faithfulness"]) >= 0
+                and statistics.mean(delta_by_dim["voice"]) >= 0
+                and hard_errors["skill"] == 0)
+    elapsed = {arm: [r.get("wall_seconds") for r in index.values()
+                     if r["arm"] == arm and isinstance(r.get("wall_seconds"), (float, int))]
+               for arm in ("baseline", "skill")}
     return {
         "protocol": manifest["protocol"], "n": n, "seed": manifest["seed"],
         "split": "holdout" if is_independent else "development_or_mixed",
@@ -201,10 +209,12 @@ def report(manifest: dict, responses: list[dict], ratings: list[dict]) -> dict:
         "runner": sorted({str(v["runner"]) for v in index.values()}),
         "mean_preference": round(statistics.mean(margins), 4),
         "preference_bootstrap_lower_95": lcb,
-        "mean_delta": {"naturalness": round(statistics.mean(natural), 3),
-                       "clarity": round(statistics.mean(clear), 3)},
+        "mean_delta": {d: round(statistics.mean(values), 3) for d, values in delta_by_dim.items()},
         "hard_error_cases": hard_errors, "min_raters_per_case": min_raters,
-        "status": "improved_on_this_holdout" if improved else "inconclusive_or_not_improved",
+        "mean_wall_seconds": {arm: (round(statistics.mean(v), 3) if v else None)
+                              for arm, v in elapsed.items()},
+        "status": ("improved_on_this_holdout" if improved else
+                   "insufficient_evidence" if not sufficient else "no_verified_improvement"),
         "evidence_requirements_met": sufficient,
         "details": details,
         "limitations": ("Ratings must be independent and blinded; this script cannot verify model settings, "
@@ -228,16 +238,19 @@ def run_agents(manifest: dict, baseline_cmd: str, skill_cmd: str, model: str,
                 raise ValueError("adapter command is empty")
             payload = {"id": case_id, "request": case["request"], "text": case["text"],
                        "genre": case["genre"], "arm": arm}
+            started = time.perf_counter()
             proc = subprocess.run(command, input=json.dumps(payload, ensure_ascii=False),
                                   text=True, capture_output=True, timeout=timeout, check=False)
             if proc.returncode:
                 raise ValueError(f"{case_id}/{arm}: adapter failed exit={proc.returncode}; "
                                  f"stderr={proc.stderr[:600]}")
+            elapsed = time.perf_counter() - started
             generated = proc.stdout.strip()
             if not generated:
                 raise ValueError(f"{case_id}/{arm}: empty model output")
             result.append({"id": case_id, "arm": arm, "text": generated,
-                           "model": model, "settings": settings, "runner": runner})
+                           "model": model, "settings": settings, "runner": runner,
+                           "wall_seconds": round(elapsed, 3)})
     return result
 
 
