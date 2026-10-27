@@ -54,6 +54,7 @@ class HarnessTests(unittest.TestCase):
         self.assertEqual(a, ab.prepare(list(reversed(cases)), 12))
         self.assertNotEqual(a, ab.prepare(cases, 13))
         self.assertEqual(len(a["cases"]), 30)
+        self.assertEqual(len(a["corpus_sha256"]), 64)
         self.assertTrue(all(set((c["A"], c["B"])) == {"skill", "baseline"}
                             for c in a["cases"]))
 
@@ -72,7 +73,7 @@ class HarnessTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "both arms"):
             ab.response_index(rows[:1], ab.validate_manifest(m))
         rows[1]["settings"] = {"temperature": 1}
-        with self.assertRaisesRegex(ValueError, "mismatched settings"):
+        with self.assertRaisesRegex(ValueError, "model/settings/runner"):
             ab.response_index(rows, ab.validate_manifest(m))
 
     def test_development_smoke_can_never_claim_improvement(self):
