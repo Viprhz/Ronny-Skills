@@ -10,6 +10,8 @@ import argparse
 import hashlib
 import json
 import random
+import shlex
+import subprocess
 import statistics
 import sys
 from collections import defaultdict
@@ -211,6 +213,34 @@ def report(manifest: dict, responses: list[dict], ratings: list[dict]) -> dict:
     }
 
 
+
+def run_agents(manifest: dict, baseline_cmd: str, skill_cmd: str, model: str,
+               settings: dict, runner: str, timeout: int) -> list[dict]:
+    """Execute configured adapters in randomized order. No shell; JSON request on stdin."""
+    cases = validate_manifest(manifest)
+    if not all((baseline_cmd, skill_cmd, model, runner)) or not isinstance(settings, dict):
+        raise ValueError("commands, model, runner and settings are required")
+    result = []
+    for case_id, case in cases.items():
+        for arm in case["execution_order"]:
+            command = shlex.split(skill_cmd if arm == "skill" else baseline_cmd)
+            if not command:
+                raise ValueError("adapter command is empty")
+            payload = {"id": case_id, "request": case["request"], "text": case["text"],
+                       "genre": case["genre"], "arm": arm}
+            proc = subprocess.run(command, input=json.dumps(payload, ensure_ascii=False),
+                                  text=True, capture_output=True, timeout=timeout, check=False)
+            if proc.returncode:
+                raise ValueError(f"{case_id}/{arm}: adapter failed exit={proc.returncode}; "
+                                 f"stderr={proc.stderr[:600]}")
+            generated = proc.stdout.strip()
+            if not generated:
+                raise ValueError(f"{case_id}/{arm}: empty model output")
+            result.append({"id": case_id, "arm": arm, "text": generated,
+                           "model": model, "settings": settings, "runner": runner})
+    return result
+
+
 def cli() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     sub = ap.add_subparsers(dest="command", required=True)
@@ -218,6 +248,17 @@ def cli() -> int:
     p.add_argument("--cases", type=Path, required=True)
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--seed", type=int, default=20261027)
+    p = sub.add_parser("run", help="run CLI adapters on paired cases (paid model calls)")
+    p.add_argument("--manifest", type=Path, required=True)
+    p.add_argument("--baseline-cmd", required=True,
+                   help="adapter command reading request JSON on stdin; must NOT load skill")
+    p.add_argument("--skill-cmd", required=True,
+                   help="same model/config adapter loading the actual skill")
+    p.add_argument("--model", required=True, help="exact model identifier, including version")
+    p.add_argument("--settings-json", required=True, help="model config JSON (temperature etc.)")
+    p.add_argument("--runner", required=True, help="agent CLI version and execution environment")
+    p.add_argument("--timeout", type=int, default=180)
+    p.add_argument("--out", type=Path, required=True)
     p = sub.add_parser("blind", help="create blinded rating packets from paired outputs")
     p.add_argument("--manifest", type=Path, required=True)
     p.add_argument("--responses", type=Path, required=True)
@@ -236,8 +277,16 @@ def cli() -> int:
             print(f"Prepared {len(result['cases'])} cases (not quality evidence).")
         else:
             manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
-            responses = read_jsonl(args.responses)
-            if args.command == "blind":
+            responses = read_jsonl(args.responses) if args.command != "run" else []
+            if args.command == "run":
+                settings = json.loads(args.settings_json)
+                if args.timeout <= 0:
+                    raise ValueError("timeout must be positive")
+                outputs = run_agents(manifest, args.baseline_cmd, args.skill_cmd,
+                                     args.model, settings, args.runner, args.timeout)
+                write_jsonl(args.out, outputs)
+                print(f"Collected {len(outputs)} unblinded responses; do not show raters.")
+            elif args.command == "blind":
                 packets = blind_packets(manifest, responses)
                 write_jsonl(args.out, packets)
                 print(f"Prepared {len(packets)} blinded packets.")
