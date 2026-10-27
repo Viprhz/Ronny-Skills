@@ -51,6 +51,29 @@ python3 scripts/ab_eval.py blind \
 
 也可不用 `run`，从两套现有 Agent 工作流导出 `responses.jsonl`（每个 id 两行，`arm=baseline|skill`，包含 `text, model, settings, runner`）直接开始 `blind`。这是评测**真实 Hermes/Claude Code/Codex skill 执行**的推荐接入方式。
 
+## 现成的 Codex / Claude Code CLI Adapter
+
+无需自己编写 Adapter，可使用 `scripts/ab_agent_adapter.py`：它将输入 JSON 变为中文编辑任务，调用**独立的新 CLI 会话**，并在 skill 组要求 Agent 读取真实 `SKILL.md` 和本地脚本。两组保持相同的公共编辑要求；只有 skill 组多出 Skill 加载步骤。
+
+先创建两个组共用的**干净临时工作目录**，避免基线意外自动加载仓库内的 Skill（若用户的全局 Agent 配置自动加载了相同 Skill，也必须禁用）。需事先完成 Claude/Codex CLI 登录并确定模型版本：
+
+```bash
+mkdir -p /tmp/sloptrim-ab/runner
+
+# 可替换为 --agent-command 'claude -p --model YOUR_EXACT_MODEL --output-format text'
+# 以下 Codex 命令的模型须通过 CLI 配置/参数固定后再运行。
+python3 scripts/ab_eval.py run \
+  --manifest /tmp/sloptrim-ab/manifest.json \
+  --baseline-cmd "python3 scripts/ab_agent_adapter.py --arm baseline --cwd /tmp/sloptrim-ab/runner --agent-command 'codex exec --ephemeral --skip-git-repo-check -' --trace-dir /tmp/sloptrim-ab/traces" \
+  --skill-cmd "python3 scripts/ab_agent_adapter.py --arm skill --cwd /tmp/sloptrim-ab/runner --agent-command 'codex exec --ephemeral --skip-git-repo-check -' --trace-dir /tmp/sloptrim-ab/traces" \
+  --model 'FIXED_EXACT_MODEL_VERSION' \
+  --settings-json '{"thinking":"fixed"}' \
+  --runner 'codex CLI version and environment' \
+  --timeout 300 --out /tmp/sloptrim-ab/responses.jsonl
+```
+
+注意：命令只提供调用方式。必须确认 CLI 实际安装、登录、模型与推理设置已经固定，**在 Skill 组的原始 Agent 执行日志中验证它确实读取并执行了 Skill**。Adapter 的 trace 记录 prompt 与 Skill 的 SHA256、执行退出码和 stderr 摘要，不能证明 Agent 按指令调用了所有工具。若 CLI 受权限限制无法读取/运行脚本，不应把仅听到 Skill 名称的输出计为“完整 Skill 组”。不要开启跳过沙箱/审批的危险权限来完成评测。
+
 ## 盲评和评分口径
 
 只把 `blind.jsonl` 发给评审，不给 `manifest`、原始响应文件、模型/版本标识、检测器分数和生成来源。每份独立评审至少 2 人，尽量使用非开发者、没有看到两组真实标签的读者。
